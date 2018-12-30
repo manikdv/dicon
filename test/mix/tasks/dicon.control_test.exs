@@ -7,15 +7,40 @@ defmodule Mix.Tasks.Dicon.ControlTest do
     config = %{
       otp_app: :sample,
       target_dir: "test",
+      parallel: false,
       hosts: [:one, :two],
       one: [authority: "one"],
-      two: [authority: "two"],
+      two: [authority: "two"]
     }
+
     Mix.Config.persist(dicon: config)
     :ok
   end
 
   test "commands are run and feedback is received" do
+    run(["run"])
+
+    assert_receive {:dicon, ref, :connect, ["one"]}
+    assert_receive {:dicon, ^ref, :exec, ["test/current/bin/sample run"]}
+
+    assert_receive {:dicon, ref, :connect, ["two"]}
+    assert_receive {:dicon, ^ref, :exec, ["test/current/bin/sample run"]}
+
+    refute_receive {:dicon, _, _, _}
+  end
+
+  test "commands are run in parallel" do
+    config = %{
+      otp_app: :sample,
+      target_dir: "test",
+      parallel: true,
+      hosts: [:one, :two],
+      one: [authority: "one"],
+      two: [authority: "two"]
+    }
+
+    Mix.Config.persist(dicon: config)
+
     run(["run"])
 
     assert_receive {:dicon, ref, :connect, ["one"]}
@@ -33,8 +58,9 @@ defmodule Mix.Tasks.Dicon.ControlTest do
       target_dir: "test",
       hosts: [:one, :two],
       one: [authority: "one"],
-      two: [authority: "two"],
+      two: [authority: "two"]
     }
+
     Mix.Config.persist(dicon: config)
 
     run(["run", "--only", "one"])
@@ -82,12 +108,15 @@ defmodule Mix.Tasks.Dicon.ControlTest do
       otp_app: :sample,
       target_dir: "test",
       hosts: [:one],
-      one: [authority: "one", os_env: %{"IS_FOO" => "yes it is", "BAR" => "baz\"bong"}],
+      one: [authority: "one", os_env: %{"IS_FOO" => "yes it is", "BAR" => "baz\"bong"}]
     }
+
     Mix.Config.persist(dicon: config)
 
     run(["run"])
     assert_receive {:dicon, ref, :connect, ["one"]}
-    assert_receive {:dicon, ^ref, :exec, [~S(BAR="baz\"bong" IS_FOO="yes it is" test/current/bin/sample run)]}
+
+    assert_receive {:dicon, ^ref, :exec,
+                    [~S(BAR="baz\"bong" IS_FOO="yes it is" test/current/bin/sample run)]}
   end
 end

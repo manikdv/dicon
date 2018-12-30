@@ -26,25 +26,49 @@ defmodule Mix.Tasks.Dicon.Deploy do
   alias Dicon.Executor
 
   @options [strict: [only: :keep, skip: :keep]]
+  @timeout 10000
 
   def run(argv) do
     case OptionParser.parse(argv, @options) do
       {opts, [source, version], []} ->
+        parallel = config(:parallel, opts)
+        hosts = config(:hosts, opts)
         target_dir = config(:target_dir)
-        for host <- config(:hosts, opts) do
-          host_config = host_config(host)
-          authority = Keyword.fetch!(host_config, :authority)
-          conn = Executor.connect(authority)
-          release_file = upload(conn, [source], target_dir)
-          target_dir = [target_dir, ?/, version]
-          unpack(conn, release_file, target_dir)
-          write_custom_config(conn, host_config, target_dir, version)
-        end
+        run(hosts, source, version, target_dir, parallel)
+
       {_opts, _commands, [switch | _]} ->
-        Mix.raise "Invalid option: " <> Mix.Dicon.switch_to_string(switch)
+        Mix.raise("Invalid option: " <> Mix.Dicon.switch_to_string(switch))
+
       {_opts, _commands, _errors} ->
-        Mix.raise "Expected two arguments (the tarball path and the version)"
+        Mix.raise("Expected two arguments (the tarball path and the version)")
     end
+  end
+
+  defp run(hosts, source, version, target_dir, _parallel = false) do
+    for host <- hosts do
+      deploy(host, source, version, target_dir)
+    end
+  end
+
+  defp run(hosts, source, version, target_dir, _parallel = true) do
+    tasks = for host <- hosts do
+      Task.async(fn -> deploy(host, source, version, target_dir) end)
+    end
+
+    tasks_with_results = Task.yield_many(tasks, @timeout)
+
+    for task <- tasks_with_results do
+    end
+  end
+
+  defp deploy(host, source, version, target_dir) do
+    host_config = host_config(host)
+    authority = Keyword.fetch!(host_config, :authority)
+    conn = Executor.connect(authority)
+    release_file = upload(conn, [source], target_dir)
+    target_dir = [target_dir, ?/, version]
+    unpack(conn, release_file, target_dir)
+    write_custom_config(conn, host_config, target_dir, version)
   end
 
   defp ensure_dir(conn, path) do
@@ -75,11 +99,14 @@ defmodule Mix.Tasks.Dicon.Deploy do
       Executor.exec(conn, ["cat ", sys_config_path], device)
       {:ok, {"", sys_config_content}} = StringIO.close(device)
       {:ok, device} = StringIO.open(sys_config_content)
-      sys_config = case :io.read(device, "") do
-        {:ok, sys_config} -> sys_config
-        {:error, _reason} -> Mix.raise("Could not parse \"sys.config\" file")
-        :eof -> Mix.raise("\"sys.config\" file is incomplete")
-      end
+
+      sys_config =
+        case :io.read(device, "") do
+          {:ok, sys_config} -> sys_config
+          {:error, _reason} -> Mix.raise("Could not parse \"sys.config\" file")
+          :eof -> Mix.raise("\"sys.config\" file is incomplete")
+        end
+
       {:ok, _} = StringIO.close(device)
 
       config = Mix.Config.merge(sys_config, config)

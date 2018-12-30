@@ -38,16 +38,35 @@ defmodule Mix.Tasks.Dicon.Switch do
             "/" <> _ = dir -> dir
             dir -> ["$PWD", ?/, dir]
           end
-        for host <- config(:hosts, opts) do
-          authority = Keyword.fetch!(host_config(host), :authority)
-          conn = Executor.connect(authority)
-          symlink(conn, [target_dir, ?/, version], [target_dir, "/current"])
-        end
+
+        hosts = config(:hosts, opts)
+        parallel = config(:parallel, opts)
+        run(hosts, version, target_dir, parallel)
+
       {_opts, _commands, [switch | _]} ->
-        Mix.raise "Invalid option: " <> Mix.Dicon.switch_to_string(switch)
+        Mix.raise("Invalid option: " <> Mix.Dicon.switch_to_string(switch))
+
       {_opts, _commands, _errors} ->
-        Mix.raise "Expected a single argument (the version)"
+        Mix.raise("Expected a single argument (the version)")
     end
+  end
+
+  defp run(hosts, version, target_dir, _parallel = false) do
+    for host <- hosts do
+      switch(host, version, target_dir)
+    end
+  end
+
+  defp run(hosts, version, target_dir, _parallel = true) do
+    for host <- hosts do
+      Task.start(fn -> switch(host, version, target_dir) end)
+    end
+  end
+
+  defp switch(host, version, target_dir) do
+    authority = Keyword.fetch!(host_config(host), :authority)
+    conn = Executor.connect(authority)
+    symlink(conn, [target_dir, ?/, version], [target_dir, "/current"])
   end
 
   defp symlink(conn, source, target) do
